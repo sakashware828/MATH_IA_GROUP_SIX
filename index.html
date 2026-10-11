@@ -61,7 +61,9 @@ canvas{width:100%;height:280px;display:block}
 .ctl{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,230px));gap:14px;margin:6px 0 14px}
 .ctl label{font-size:13px;color:var(--mute);display:block}
 .ctl input,.ctl select{margin-top:4px}
-.maps{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.maps{display:grid;grid-template-columns:1fr;gap:20px}
+#rMap,#vMap{height:540px}
+.base-soft{filter:saturate(.72) contrast(.96) brightness(1.04)}
 .hm{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-top:10px}
 .hm div{aspect-ratio:1;border-radius:4px;font-size:10px;display:flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}
 .maps3{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:22px}
@@ -71,6 +73,7 @@ canvas{width:100%;height:280px;display:block}
 .mapsub{font-size:13px;color:var(--mute);margin:2px 0 0}
 .mapbox{position:relative;margin-top:6px}
 .lmap{height:360px;border-radius:10px;border:1px solid var(--line);z-index:0}
+.vsw{display:flex;overflow:hidden;background:var(--panel);border:1px solid var(--line)!important;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.25)}.vsw button{font:600 12px "Instrument Sans",system-ui,sans-serif;padding:5px 9px;border:0;background:transparent;color:var(--ink);cursor:pointer}.vsw button.on{background:var(--chip);color:var(--chipink)}
 .ztip{background:rgba(255,255,255,.92);border:0;border-radius:4px;box-shadow:none;font:600 11px "Instrument Sans",sans-serif;color:#12202e;padding:1px 5px}
 .ztip:before{display:none}
 .chip{z-index:1000;position:absolute;left:12px;top:12px;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:4px 10px;font-weight:600;font-size:13px}
@@ -250,7 +253,7 @@ td:first-child{color:var(--mute)}td+td{font-weight:600}
       <div style="height:10px;border-radius:5px;margin-top:18px;background:linear-gradient(90deg,rgb(40,70,210),rgb(40,190,225),rgb(90,205,90),rgb(250,230,60),rgb(225,40,30))"></div>
       <div class="sl"><span id="sLo">Cooler</span><span>Forecast temperature, same scale on both maps</span><span id="sHi">Hotter</span></div>
       <p class="note" id="mapCmp"></p>
-      <p class="mapsub" style="margin-top:10px">Base map © Esri, HERE, Garmin, OpenStreetMap contributors. City centres use real coordinates. Each zone adds a fixed urban offset to the city's forecast, so zone positions and offsets are illustrative, not measured.</p>
+      <p class="mapsub" style="margin-top:10px">Base map © Esri, HERE, Garmin, OpenStreetMap contributors. The thermal colour is semi-transparent so roads, towns and water stay visible. Use the layers button on each map to change the base map or switch the thermal colour and district outline on and off. City centres use real coordinates. Each zone adds a fixed urban offset to the city's forecast, so zone positions and offsets are illustrative, not measured. The dashed line is the district boundary (Census 2011), and in district view the colour is clipped to it.</p>
       <p class="note" id="fcNote"></p>
     </section>
 
@@ -409,12 +412,12 @@ function renderForecast(){
   drawFC();drawMaps();
 }
 const stopsH=[[40,70,210],[40,190,225],[90,205,90],[250,230,60],[225,40,30]];
-function thermalLayer(getPts){
+function thermalLayer(getPts,getClip){
   const T=L.Layer.extend({
     onAdd(map){
       this._map=map;
       const pane=map.getPane("thermal")||map.createPane("thermal");pane.style.zIndex=350;
-      const c=this._c=document.createElement("canvas");c.style.cssText="position:absolute;pointer-events:none;filter:blur(5px);opacity:.82";
+      const c=this._c=document.createElement("canvas");c.className="heat-canvas";c.style.cssText="filter:blur(4px);opacity:.74";
       pane.appendChild(c);map.on("moveend zoomend resize",this.redraw,this);this.redraw();
     },
     onRemove(map){this._c.remove();map.off("moveend zoomend resize",this.redraw,this)},
@@ -424,19 +427,22 @@ function thermalLayer(getPts){
       L.DomUtil.setPosition(c,m.containerPointToLayerPoint([0,0]));
       const ctx=c.getContext("2d"),pts=getPts().map(p=>{const q=m.latLngToContainerPoint([p.lat,p.lng]);return{x:q.x,y:q.y,v:p.v}});
       if(!pts.length||typeof fc==="undefined"||!fc)return;
-      const R=95,step=5,span=fc.hi-fc.lo;
+      const R=95,step=5,span=fc.hi-fc.lo,clip=getClip&&getClip();let clipped=false;
+      if(clip&&m.getZoom()<11){ctx.save();ctx.beginPath();clip.forEach(ring=>{ring.forEach((ll,i)=>{const q=m.latLngToContainerPoint(ll);i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y)});ctx.closePath()});ctx.clip();clipped=true}
       for(let y=0;y<sz.y;y+=step)for(let x=0;x<sz.x;x+=step){
         let num=0,den=0,cov=0;
         for(const p of pts){const d2=(x-p.x)*(x-p.x)+(y-p.y)*(y-p.y);const w=1/(d2+400);num+=w*p.v;den+=w;cov=Math.max(cov,Math.exp(-d2/(R*R)))}
         const t=Math.max(0,Math.min(1,(num/den-fc.lo)/span)),col=lerp(stopsH,t);
-        ctx.fillStyle=`rgba(${col},${(.16+.74*cov).toFixed(3)})`;ctx.fillRect(x,y,step,step);
+        ctx.fillStyle=`rgba(${col},${(clipped?.6+.3*cov:.34+.5*cov).toFixed(3)})`;ctx.fillRect(x,y,step,step);
       }
+      if(clipped)ctx.restore();
     }
   });
   return new T();
 }
 const LC={r:{id:"rMap",c:[28.2972,74.9644],z:[["City centre",0,0,1.3],["Market area",.012,.014,.9],["Railway area",-.012,-.014,.5],["Industrial area",-.016,.018,1.1],["Outskirts",.03,-.03,-1]]},
  v:{id:"vMap",c:[20.7096,77.0081],z:[["City centre",0,0,1.1],["Market area",.012,.012,.8],["Railway area",-.01,-.016,.4],["Industrial area",.018,-.02,.9],["Riverside",-.02,.02,-.8]]}};
+const DIST={"r":{"name":"Churu","c":[28.196,74.6518],"g":{"type":"Polygon","coordinates":[[[75.4743,28.926],[75.5202,28.8339],[75.5615,28.6126],[75.6226,28.6016],[75.67,28.5191],[75.5003,28.3363],[75.3825,28.3376],[75.248,28.4641],[75.225,28.3954],[75.1455,28.3816],[75.147,28.295],[75.0446,28.2552],[75.0247,28.2029],[74.8871,28.1892],[74.806,28.0627],[74.7846,27.9541],[74.7357,27.8908],[74.8183,27.8015],[74.7418,27.7671],[74.7173,27.6778],[74.6271,27.6489],[74.491,27.6874],[74.3412,27.6819],[74.254,27.6008],[74.1959,27.499],[74.2035,27.4221],[74.0812,27.4784],[74.0292,27.5348],[73.9084,27.4894],[73.8748,27.5375],[73.8946,27.6022],[73.8579,27.6599],[73.8671,27.7795],[73.9925,27.8111],[73.9971,27.7341],[74.0659,27.7314],[74.1194,27.7974],[74.2265,27.8166],[74.2387,27.9995],[74.2953,28.0448],[74.2938,28.1452],[74.358,28.2057],[74.2479,28.2469],[74.1974,28.3308],[74.0613,28.3321],[74.0277,28.3761],[74.0537,28.526],[74.1087,28.5851],[74.0797,28.6703],[74.1928,28.7088],[74.1607,28.7762],[74.2678,28.7968],[74.4192,28.8848],[74.4757,28.8147],[74.7495,28.8532],[74.803,28.9288],[74.9238,28.8917],[74.9941,28.9095],[75.2189,28.8656],[75.2434,28.9315],[75.3336,28.9824],[75.3657,28.915],[75.4743,28.926]]]}},"v":{"name":"Akola","c":[20.7469,77.1875],"g":{"type":"Polygon","coordinates":[[[76.82,20.2802],[76.7435,20.3379],[76.7084,20.5002],[76.7695,20.518],[76.7833,20.6033],[76.7328,20.6555],[76.7741,20.7751],[76.7649,20.8562],[76.797,21.0033],[76.7741,21.0844],[76.7833,21.193],[76.9989,21.1958],[77.1671,21.2425],[77.1763,21.0721],[77.1289,20.8631],[77.2864,20.8466],[77.5295,20.8494],[77.6106,20.7999],[77.6106,20.7188],[77.4791,20.6624],[77.4592,20.617],[77.3399,20.5758],[77.3399,20.4837],[77.2298,20.474],[77.1824,20.3984],[77.0142,20.4122],[76.82,20.2802]]]}}};
 const LM={};
 function drawMaps(){
   if(!fc)return;
@@ -446,15 +452,41 @@ function drawMaps(){
   [["r",fc.r,"mapCapR"],["v",fc.v,"mapCapV"]].forEach(([k,f,cap])=>{
     const cfg=LC[k],base=f.pred[d];
     if(!LM[k]){
-      const map=L.map(cfg.id,{scrollWheelZoom:false}).setView(cfg.c,13);
-      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",{maxNativeZoom:16,maxZoom:18,attribution:"Tiles &copy; Esri"}).addTo(map);
-      const st={pts:[]},heat=thermalLayer(()=>st.pts).addTo(map);
-      const mk=cfg.z.map(([n,a,b])=>L.circleMarker([cfg.c[0]+a,cfg.c[1]+b],{radius:3,color:"#12202e",weight:1,fillColor:"#fff",fillOpacity:1}).bindTooltip("",{permanent:true,direction:"bottom",offset:[0,4],className:"ztip"}).addTo(map));
-      LM[k]={map,heat,mk,st};
+      const map=L.map(cfg.id,{scrollWheelZoom:false,zoomControl:false,zoomSnap:.25,minZoom:6});
+      /* real base maps */
+      const street=L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",{maxNativeZoom:19,maxZoom:19,className:"base-soft",attribution:"Tiles &copy; Esri &mdash; Esri, HERE, Garmin, OpenStreetMap contributors"}).addTo(map);
+      const osm=L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,referrerPolicy:"origin-when-cross-origin",className:"base-soft",attribution:"&copy; OpenStreetMap contributors"});
+      const sat=L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",{maxNativeZoom:18,maxZoom:19,attribution:"Tiles &copy; Esri, Maxar, Earthstar Geographics"});
+      /* a pane above the thermal colour for the district outline and satellite labels */
+      const refPane=map.createPane("outline");refPane.style.zIndex=380;refPane.style.pointerEvents="none";
+      const satG=L.layerGroup([sat,L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",{pane:"outline",maxNativeZoom:16,maxZoom:19})]);
+      const D=DIST[k],rings=(D.g.type==="Polygon"?[D.g.coordinates]:D.g.coordinates).map(pl=>pl[0].map(([x,y])=>[y,x]));
+      const st={pts:[]},heat=thermalLayer(()=>st.pts,()=>rings).addTo(map);
+      const mk=cfg.z.map(([n,a,b])=>L.circleMarker([cfg.c[0]+a,cfg.c[1]+b],{radius:4,color:"#12202e",weight:1.5,fillColor:"#fff",fillOpacity:1}).bindTooltip("",{permanent:true,direction:"bottom",offset:[0,6],className:"ztip"}));
+      /* district boundary: white halo + dark dashed line, above the colour */
+      const dO={pane:"outline",interactive:false};
+      const dHalo=L.geoJSON(D.g,{...dO,style:()=>({color:"#fff",weight:6,opacity:.85,fill:false})});
+      const dLine=L.geoJSON(D.g,{...dO,style:()=>({color:"#12202e",weight:2.5,dashArray:"7 5",fill:false})});
+      const dGrp=L.layerGroup([dHalo,dLine]).addTo(map);
+      const dB=dLine.getBounds(),zB=L.latLngBounds(cfg.z.map(([n,a,b])=>[cfg.c[0]+a,cfg.c[1]+b]));
+      const dm=L.circleMarker(D.c,{radius:0,opacity:0,fill:false,interactive:false}).bindTooltip("",{permanent:true,direction:"center",className:"ztip"});
+      const cityView=()=>map.fitBounds(zB,{padding:[90,90],maxZoom:15});
+      const sw=L.control({position:"topright"}),swD=L.DomUtil.create("div","vsw leaflet-control");
+      swD.innerHTML='<button type="button" data-v="d">District</button><button type="button" data-v="c">City zones</button>';
+      L.DomEvent.disableClickPropagation(swD);
+      swD.addEventListener("click",e=>{const v=e.target.dataset&&e.target.dataset.v;if(v==="d")map.fitBounds(dB,{padding:[14,14]});else if(v==="c")cityView()});
+      sw.onAdd=()=>swD;sw.addTo(map);L.control.zoom({position:"topright"}).addTo(map);
+      L.control.layers({"Streets":street,"OpenStreetMap":osm,"Satellite":satG},{"Thermal colour":heat,"District outline":dGrp},{position:"topright"}).addTo(map);
+      L.control.scale({imperial:false,position:"bottomright"}).addTo(map);
+      const sync=()=>{const city=map.getZoom()>=11;mk.forEach(x=>city?x.addTo(map):x.remove());city?dm.remove():dm.addTo(map);
+        swD.querySelectorAll("button").forEach(b=>b.classList.toggle("on",(b.dataset.v==="c")===city))};
+      map.on("zoomend",sync);cityView();sync();
+      LM[k]={map,heat,mk,st,dm,D};
     }
     const m=LM[k],zs=cfg.z.map(([n,a,b,o])=>({n,v:base+o}));
     m.st.pts=cfg.z.map(([n,a,b,o])=>({lat:cfg.c[0]+a,lng:cfg.c[1]+b,v:base+o}));m.heat.redraw();
     zs.forEach((z,i)=>m.mk[i].setTooltipContent(`${z.n} ${z.v.toFixed(1)}°`));
+    m.dm.setTooltipContent(`${m.D.name} district ${mean(zs.map(z=>z.v)).toFixed(1)}°`);
     m.map.invalidateSize();
     const hot=zs.reduce((x,y)=>y.v>x.v?y:x);hv[k]=hot;
     $(cap).textContent=`Hottest zone: ${hot.n}, ${hot.v.toFixed(1)} °C. Zone average: ${mean(zs.map(z=>z.v)).toFixed(1)} °C.`;
